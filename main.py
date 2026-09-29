@@ -25,3 +25,13 @@ class Tile:
             position_match = (self.current_r == self.correct_r) and (self.current_c == self.correct_c)
             image_match = np.array_equal(np.array(self.current_img), np.array(self.original_img))
             return position_match and image_match
+
+        def rotate(self, clockwise90_count):
+            """Rotate the tile image."""
+            for _ in range(clockwise90_count):
+                self.current_img = cv2.rotate(self.current_img, cv2.ROTATE_90_CLOCKWISE)
+
+        def flip(self, horziontal=True):
+            """Flip the time image."""
+            flip_code = 1 if horziontal else 0
+            self.current_img = cv2.flip(self.current_img, flip_code)        
