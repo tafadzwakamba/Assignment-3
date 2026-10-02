@@ -20,51 +20,61 @@ class Tile:
         self.current_c = correct_c        # Current column position
         self.image = ImageTk.PhotoImage(original_img)  # Tkinter-compatible image
 
-        def is_correct(self):
-            """Check if the tile is in home position with correct orientation."""
-            position_match = (self.current_r == self.correct_r) and (self.current_c == self.correct_c)
-            image_match = np.array_equal(np.array(self.current_img), np.array(self.original_img))
-            return position_match and image_match
+    def is_correct(self):
+        """Check if the tile is in home position with correct orientation."""
+        position_match = (self.current_r == self.correct_r) and (self.current_c == self.correct_c)
+        image_match = np.array_equal(np.array(self.current_img), np.array(self.original_img))
+        return position_match and image_match
 
-        def rotate(self, clockwise90_count):
-            """Rotate the tile image."""
-            for _ in range(clockwise90_count):
-                self.current_img = cv2.rotate(self.current_img, cv2.ROTATE_90_CLOCKWISE)
+    def rotate(self, clockwise90_count):
+        """Rotate the tile image."""
+        for _ in range(clockwise90_count):
+            self.current_img = cv2.rotate(self.current_img, cv2.ROTATE_90_CLOCKWISE)
 
-        def flip(self, horizontal=True):
-            """Flip the tile image."""
-            flip_code = 1 if horizontal else 0
-            self.current_img = cv2.flip(self.current_img, flip_code)        
+    def flip(self, horizontal=True):
+        """Flip the tile image."""
+        flip_code = 1 if horizontal else 0
+        self.current_img = cv2.flip(self.current_img, flip_code)
 
 
-            # ========================================
-            #OOP: Inheritance & Polymorphism
-            #========================================
-            class Transformation:
-                """Base class for transformations applied to tiles."""
-                def apply(self, tile):
-                    raise NotImplementedError("Subclasses should implement this method.")
+# ========================================
+#OOP: Inheritance & Polymorphism
+#========================================
+class Transformation:
+    """Base class for transformations applied to tiles."""
+    def apply(self, app):
+        raise NotImplementedError("Subclasses should implement this method.")
 
-            class SwapTransform(Transformation):
-                def apply(self, app):
-                    r1, c1 = random.randint(0, app.N-1), random.randint(0, app.N-1)
-                    r2, c2 = random.randint(0, app.N-1), random.randint(0, app.N-1)
-                    # Swap positions of tiles
-                    app.tiles[r1][c1], app.tiles[r2][c2] = app.tiles[r2][c2], app.tiles[r1][c1]
-                    app.tiles[r1][c1].current_r, app.tiles[r1][c1].current_c = r1, c1
-                    app.tiles[r2][c2].current_r, app.tiles[r2][c2].current_c = r2, c2
 
-                class RotateTransform(Transformation):
-                    def apply(self, app):
-                        r, c = random.randint(0, app.N-1), random.randint(0, app.N-1)
-                        rotations = random.choice([1, 2, 3])  # Rotate by 90, 180, or 270 degrees
-                        app.tiles[r][c].rotate(rotations)
+class SwapTransform(Transformation):
+    """Swap two tiles in the puzzle grid."""
+    def apply(self, app):
+        r1, c1 = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
+        r2, c2 = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
 
-                class FlipTransform(Transformation):
-                    def apply(self, app):
-                        r, c = random.randint(0, app.N-1), random.randint(0, app.N-1)
-                        horizontal = random.choice([True, False])
-                        app.tiles[r][c].flip(horizontal) 
+        # Ensure we are swapping two distinct tiles but still allow same-grid random choices
+        while (r1, c1) == (r2, c2):
+            r2, c2 = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
+
+        app.tiles[r1][c1], app.tiles[r2][c2] = app.tiles[r2][c2], app.tiles[r1][c1]
+        app.tiles[r1][c1].current_r, app.tiles[r1][c1].current_c = r1, c1
+        app.tiles[r2][c2].current_r, app.tiles[r2][c2].current_c = r2, c2
+
+
+class RotateTransform(Transformation):
+    """Rotate a random tile by a random amount."""
+    def apply(self, app):
+        r, c = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
+        rotations = random.choice([1, 2, 3])
+        app.tiles[r][c].rotate(rotations)
+
+
+class FlipTransform(Transformation):
+    """Flip a random tile horizontally or vertically."""
+    def apply(self, app):
+        r, c = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
+        horizontal = random.choice([True, False])
+        app.tiles[r][c].flip(horizontal)
 
 
 #========================================
@@ -132,10 +142,14 @@ class PuzzleApp:
         self.hint_active = False
         self.is_solved = False
         self.selected_tile = None
-        self.btb_hint.config(text=f"Hint ({self.hints_remaining} left)"), state=tk.NORMAL
+        self.btn_hint.config(text=f"Hint ({self.hints_remaining} left)", state=tk.NORMAL)
 
         # Load and prepare image (resize to 400x400 max, then crop to divide evenly)
         img = cv2.imread(file_path)
+        if img is None:
+            messagebox.showerror("Load Image", f"Could not load image: {file_path}")
+            return
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         h, w, _ = img.shape[:2]
         scale = min(400/w, 400/h)
@@ -157,12 +171,110 @@ class PuzzleApp:
             self.tiles.append(row)
 
         # Scramble
-        transform_count = {3: 6, 4: 12, 5: 20}[self.N] # Scale transformations by grid size[cite: 1]
+        transform_count = {3: 6, 4: 12, 5: 20}[self.N] # Scale transformations by grid size
         transforms = [SwapTransform(), RotateTransform(), FlipTransform()]
         for _ in range(transform_count):
             random.choice(transforms).apply(self)
 
         self.render_original()
         self.render_transformed()  
+
+    def render_original(self):
+        """Displays static original image on the left."""
+        if self.original_image_cv is None:
+            self.canvas_orig.delete("all")
+            return
+
+        self.canvas_orig.delete("all")
+        img_pil = Image.fromarray(self.original_image_cv)
+        self.tk_original_img = ImageTk.PhotoImage(img_pil)
+        self.canvas_orig.create_image(0, 0, anchor=tk.NW, image=self.tk_original_img)
+
+    def render_transformed(self):
+        """Displays interactive tiles, grids, hints, and ticks on the right."""
+        self.canvas_trans.delete("all")
+        self.tk_tiles = []
+        incorrect_count = 0    
+
+        for r in range(self.N):
+            tk_row = []
+            for c in range(self.N):
+                tile = self.tiles[r][c]
+                x, y = c * self.tile_w, r * self.tile_h
+                
+                pil_img = Image.fromarray(tile.current_img)
+                tk_img = ImageTk.PhotoImage(pil_img)
+                tk_row.append(tk_img)
+                self.canvas_trans.create_image(x, y, anchor=tk.NW, image=tk_img)
+                
+                # Faint grid
+                self.canvas_trans.create_rectangle(x, y, x+self.tile_w, y+self.tile_h, outline="black", dash=(2, 4))
+                
+                if tile.is_correct():
+                    # Small green tick for correct tiles
+                    self.canvas_trans.create_text(x+self.tile_w-15, y+15, text="✔", fill="green", font=("Arial", 16, "bold"))
+                else:
+                    incorrect_count += 1
+                    
+                # Highlight selection
+                if self.selected_tile == (r, c):
+                    self.canvas_trans.create_rectangle(x, y, x+self.tile_w, y+self.tile_h, outline="red", width=3)
+            self.tk_tiles.append(tk_row)
+
+        self.score_label.config(text=f"Moves: {self.moves} | Incorrect: {incorrect_count}")     
+
+        # Draw Hint Circles
+        if self.hint_active and self.hint_target:
+            hr, hc = self.hint_target
+            # Circle on transformed image
+            x, y = hc * self.tile_w + self.tile_w//2, hr * self.tile_h + self.tile_h//2
+            self.canvas_trans.create_oval(x-15, y-15, x+15, y+15, outline="blue", width=3)
+            
+            # Circle on original image's home position
+            correct_r = self.tiles[hr][hc].correct_r
+            correct_c = self.tiles[hr][hc].correct_c
+            ox, oy = correct_c * self.tile_w + self.tile_w//2, correct_r * self.tile_h + self.tile_h//2
+            self.canvas_orig.create_oval(ox-15, oy-15, ox+15, oy+15, outline="blue", width=3)
+
+        if incorrect_count == 0 and not self.is_solved and self.moves > 0:
+            self.is_solved = True
+            messagebox.showinfo("Puzzle Solved!", f"Congratulations! You restored the picture in {self.moves} moves.")
+
+    def record_move(self):
+        """Increments score and clears hints after a move."""
+        self.moves += 1
+        if self.hint_active:
+            self.hint_active = False
+            self.hint_target = None
+            self.render_original() # Clear hint from left image
+        self.render_transformed()
+
+    def get_tile_index(self, event):
+        if self.is_solved or not self.tiles: return None
+        c = event.x // self.tile_w
+        r = event.y // self.tile_h
+        if 0 <= r < self.N and 0 <= c < self.N:
+            return (r, c)
+        return None
+
+    def on_left_click(self, event):
+        idx = self.get_tile_index(event)
+        if not idx: return
+        r, c = idx
         
-              
+        if self.selected_tile is None:
+            self.selected_tile = (r, c)
+            self.render_transformed()
+        elif self.selected_tile == (r, c):
+            self.selected_tile = None # Deselect
+            self.render_transformed()
+        else:
+            # Swap tiles
+            sr, sc = self.selected_tile
+            self.tiles[sr][sc], self.tiles[r][c] = self.tiles[r][c], self.tiles[sr][sc]
+            self.tiles[sr][sc].current_r, self.tiles[sr][sc].current_c = sr, sc
+            self.tiles[r][c].current_r, self.tiles[r][c].current_c = r, c
+            self.selected_tile = None
+            self.record_move() 
+
+        
