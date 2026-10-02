@@ -126,17 +126,43 @@ class PuzzleApp:
             return
 
         # Load the image using OpenCV
-        self.original_image_cv = cv2.imread(file_path)
-        if self.original_image_cv is None:
-            messagebox.showerror("Error", "Failed to load image.")
-            return
+        self.N = self.grid_size_var.get()
+        self.moves = 0
+        self.hints_remaining = 3
+        self.hint_active = False
+        self.is_solved = False
+        self.selected_tile = None
+        self.btb_hint.config(text=f"Hint ({self.hints_remaining} left)"), state=tk.NORMAL
 
-        # Resize the image to fit the canvas while maintaining aspect ratio
-        self.original_image_cv = self.resize_image(self.original_image_cv, 400, 400)
-        self.tk_original_img = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(self.original_image_cv, cv2.COLOR_BGR2RGB)))
+        # Load and prepare image (resize to 400x400 max, then crop to divide evenly)
+        img = cv2.imread(file_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w, _ = img.shape[:2]
+        scale = min(400/w, 400/h)
+        img = cv2.resize(img, (int(w*scale), int(h*scale)))
+
+        h, w, _ = img.shape[:2]
+        self.tile_w = w // self.N
+        self.tile_h = h // self.N
+        img = img[0:self.tile_h*self.N, 0:self.tile_w*self.N]  # Crop to fit grid
+        self.original_image_cv = img
+
+        # Create tiles
+        self.tiles = []
+        for r in range(self.N):
+            row = []
+            for c in range(self.N):
+                tile_img = img[r*self.tile_h:(r+1)*self.tile_h, c*self.tile_w:(c+1)*self.tile_w]
+                row.append(Tile(tile_img, r, c))
+            self.tiles.append(row)
+
+        # Scramble
+        transform_count = {3: 6, 4: 12, 5: 20}[self.N] # Scale transformations by grid size[cite: 1]
+        transforms = [SwapTransform(), RotateTransform(), FlipTransform()]
+        for _ in range(transform_count):
+            random.choice(transforms).apply(self)
+
+        self.render_original()
+        self.render_transformed()  
         
-        # Display the original image on the left canvas
-        self.canvas_orig.create_image(0, 0, anchor=tk.NW, image=self.tk_original_img)
-
-        # Initialize the puzzle tiles
-        self.initialize_tiles()
+              
