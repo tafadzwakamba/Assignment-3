@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from abc import ABC, abstractmethod
+from typing import cast
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
@@ -18,8 +20,11 @@ class Tile:
         self.correct_c = correct_c        # Correct column position
         self.current_r = correct_r        # Current row position
         self.current_c = correct_c        # Current column position
-        self.image = ImageTk.PhotoImage(original_img)  # Tkinter-compatible image
-
+        
+        # FIXED: Converted the numpy array to a PIL Image first
+        pil_image = Image.fromarray(original_img)
+        self.image = ImageTk.PhotoImage(pil_image) 
+        
     def is_correct(self):
         """Check if the tile is in home position with correct orientation."""
         position_match = (self.current_r == self.correct_r) and (self.current_c == self.correct_c)
@@ -37,22 +42,120 @@ class Tile:
         self.current_img = cv2.flip(self.current_img, flip_code)
 
 
+class OptionMenu:
+    """Simple option-selector helper with ordered values and selected-state tracking."""
+
+    def __init__(self, options=None, default=None):
+        self._options = []
+        self._selected_index = -1
+        self.selected = None
+        self.set_options(options or [], default=default)
+
+    def set_options(self, options, default=None):
+        """Replace the available options and choose a default selection."""
+        self._options = list(options)
+        if not self._options:
+            self._selected_index = -1
+            self.selected = None
+            return
+
+        if default is None:
+            default = self._options[0]
+        if default not in self._options:
+            default = self._options[0]
+
+        self._selected_index = self._options.index(default)
+        self.selected = default
+
+    def add_option(self, option):
+        """Add a new option if it is not already present."""
+        if option in self._options:
+            return self.get_selected()
+        self._options.append(option)
+        if self._selected_index == -1:
+            self._selected_index = 0
+            self.selected = option
+        return self.get_selected()
+
+    def remove_option(self, option):
+        """Remove an option and keep the current selection valid."""
+        if option not in self._options:
+            return False
+
+        index = self._options.index(option)
+        del self._options[index]
+
+        if not self._options:
+            self._selected_index = -1
+            self.selected = None
+            return True
+
+        if self._selected_index > index:
+            self._selected_index -= 1
+        elif self._selected_index == index:
+            self._selected_index = min(index, len(self._options) - 1)
+
+        self.selected = self._options[self._selected_index]
+        return True
+
+    def get_options(self):
+        """Return a copy of the current options list."""
+        return list(self._options)
+
+    def get_selected(self):
+        """Return the currently selected option or None if empty."""
+        if not self._options or self._selected_index < 0:
+            return None
+        return self._options[self._selected_index]
+
+    def set_selected(self, value):
+        """Set the selection to a known option value."""
+        if value not in self._options:
+            raise ValueError(f"Option {value!r} is not available.")
+        self._selected_index = self._options.index(value)
+        self.selected = value
+        return value
+
+    def __iter__(self):
+        return iter(self._options)
+
+    def __len__(self):
+        return len(self._options)
+
+    def __bool__(self):
+        return bool(self._options)
+
+
 # ========================================
 #OOP: Inheritance & Polymorphism
 #========================================
-class Transformation:
-    """Base class for transformations applied to tiles."""
+class Transformation(ABC):
+    """Base class for transformations applied to tiles.
+
+    Provides a safe default implementation so a transformation can be created
+    without crashing when the puzzle is uninitialized or empty.
+    """
     def apply(self, app):
-        raise NotImplementedError("Subclasses should implement this method.")
+        """Apply a mutation to the puzzle state.
+
+        Subclasses override this method to perform actual tile mutations. The
+        default implementation is intentionally a no-op so the base class can be
+        used safely as a fallback.
+        """
+        if not hasattr(app, "tiles") or not app.tiles or not app.tiles[0]:
+            return None
+        return None
 
 
 class SwapTransform(Transformation):
     """Swap two tiles in the puzzle grid."""
     def apply(self, app):
+        if not app.tiles or not app.tiles[0]:
+            return
+
         r1, c1 = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
         r2, c2 = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
 
-        # Ensure we are swapping two distinct tiles but still allow same-grid random choices
         while (r1, c1) == (r2, c2):
             r2, c2 = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
 
@@ -64,6 +167,9 @@ class SwapTransform(Transformation):
 class RotateTransform(Transformation):
     """Rotate a random tile by a random amount."""
     def apply(self, app):
+        if not app.tiles or not app.tiles[0]:
+            return
+
         r, c = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
         rotations = random.choice([1, 2, 3])
         app.tiles[r][c].rotate(rotations)
@@ -72,6 +178,9 @@ class RotateTransform(Transformation):
 class FlipTransform(Transformation):
     """Flip a random tile horizontally or vertically."""
     def apply(self, app):
+        if not app.tiles or not app.tiles[0]:
+            return
+
         r, c = random.randint(0, app.N - 1), random.randint(0, app.N - 1)
         horizontal = random.choice([True, False])
         app.tiles[r][c].flip(horizontal)
@@ -95,7 +204,7 @@ class PuzzleApp:
         self.is_solved = False  # Size of each tile in pixels
 
         self.original_image_cv = None  # Original image in OpenCV format
-        self.tiles = []  # 2D list to hold Tile objects
+        self.tiles: list[list[Tile]] = []  # 2D list to hold Tile objects
         self.tk_original_img = None  # Original image in Tkinter format
         self.tk_tiles = []  # 2D list to hold Tkinter-compatible images of tiles
 
@@ -151,11 +260,16 @@ class PuzzleApp:
             return
 
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        h, w, _ = img.shape[:2]
+        
+        # FIXED: img.shape[:2] only returns 2 values (height, width). Removed the trailing '_'
+        h, w = img.shape[:2]
+        
         scale = min(400/w, 400/h)
         img = cv2.resize(img, (int(w*scale), int(h*scale)))
 
-        h, w, _ = img.shape[:2]
+        # FIXED: removed the trailing '_' here as well
+        h, w = img.shape[:2]
+        
         self.tile_w = w // self.N
         self.tile_h = h // self.N
         img = img[0:self.tile_h*self.N, 0:self.tile_w*self.N]  # Crop to fit grid
@@ -177,7 +291,7 @@ class PuzzleApp:
             random.choice(transforms).apply(self)
 
         self.render_original()
-        self.render_transformed()  
+        self.render_transformed()
 
     def render_original(self):
         """Displays static original image on the left."""
@@ -277,4 +391,56 @@ class PuzzleApp:
             self.selected_tile = None
             self.record_move() 
 
+    def on_right_click(self, event):
+        idx = self.get_tile_index(event)
+        if not idx: return
+        self.tiles[idx[0]][idx[1]].rotate(1) # Rotate 90 deg clockwise[cite: 1]
+        self.record_move()
+
+    def on_shift_left_click(self, event):
+        idx = self.get_tile_index(event)
+        if not idx: return
+        self.tiles[idx[0]][idx[1]].flip(horizontal=True) # Flip horizontally[cite: 1]
+        self.record_move()
+
+    def use_hint(self):
+        if self.hints_remaining <= 0 or self.is_solved or not self.tiles: return
         
+        incorrect_tiles = [(r, c) for r in range(self.N) for c in range(self.N) if not self.tiles[r][c].is_correct()]
+        if not incorrect_tiles: return
+        
+        self.hints_remaining -= 1
+        self.btn_hint.config(text=f"Hint ({self.hints_remaining} left)")
+        if self.hints_remaining == 0:
+            self.btn_hint.config(state=tk.DISABLED) # Disable when empty[cite: 1]
+            
+        self.hint_target = random.choice(incorrect_tiles)
+        self.hint_active = True
+        self.render_original()
+        self.render_transformed()
+
+    def solve_puzzle(self):
+        """Instantly undoes all remaining transformations and clears score[cite: 1]."""
+        if not self.tiles or self.is_solved: return
+        
+        # Reset to home states
+        new_tiles: list[list[Tile | None]] = [[None] * self.N for _ in range(self.N)]
+        for r in range(self.N):
+            for c in range(self.N):
+                tile = self.tiles[r][c]
+                tile.current_img = tile.original_img.copy()
+                tile.current_r = tile.correct_r
+                tile.current_c = tile.correct_c
+                new_tiles[tile.correct_r][tile.correct_c] = tile
+                
+        self.tiles = [row for row in new_tiles if row]  # type: ignore[assignment]
+        self.moves = 0
+        self.selected_tile = None
+        self.hint_active = False
+        self.render_original()
+        self.render_transformed()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PuzzleApp(root)
+    root.mainloop()    
